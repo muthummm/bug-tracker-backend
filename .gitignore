@@ -1,0 +1,5 @@
+node_modules/
+# Secrets: never commit the real database password
+.env
+.env.*
+!.env.example
