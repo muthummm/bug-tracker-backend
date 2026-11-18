@@ -46,6 +46,13 @@ export const env = Object.freeze({
   // Frontend origins allowed to call the API. "*" allows any origin.
   corsOrigins: list(process.env.CORS_ORIGIN || 'http://localhost:5173'),
   cloudinary: Object.freeze(readCloudinary()),
+  // Desktop push notifications. Generate keys once with: npx web-push generate-vapid-keys
+  push: Object.freeze({
+    publicKey: process.env.VAPID_PUBLIC_KEY || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
+    subject: process.env.VAPID_SUBJECT || 'mailto:admin@example.com', // contact for the push services
+    enabled: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+  }),
 });
 
 /** Fails fast at startup instead of on the first request. */
@@ -56,6 +63,8 @@ export function validateEnv() {
     console.warn('[env] CORS_ORIGIN is "*": any website can call this API.');
   if (!env.cloudinary.enabled)
     console.warn('[env] Cloudinary is not configured: screenshot uploads will return 503.');
+  if (!env.push.enabled)
+    console.warn('[env] VAPID keys are not set: desktop push notifications are off (in-app notifications still work).');
   if (problems.length)
     throw new Error(`Invalid environment:\n  - ${problems.join('\n  - ')}\nCopy .env.example to .env and fill it in.`);
 }

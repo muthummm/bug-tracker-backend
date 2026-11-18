@@ -6,10 +6,45 @@ import { Bug, bugKey } from '../bugs/bug.model.js';
 import { Member } from '../projects/member.model.js';
 import { Project } from '../projects/project.model.js';
 import { User } from '../users/user.model.js';
+import { sendToUsers } from '../push/push.service.js';
 import { usersById } from '../users/user.service.js';
 import { Notification } from './notification.model.js';
 
 const LIST_LIMIT = 100;
+const NL = '\n';
+const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
+
+/** Title, text and link of the desktop notification for one event. */
+async function desktopMessage({ type, actorId, projectId, bug, from_status, to_status, comment }) {
+  const [actor, project] = await Promise.all([
+    User.findById(actorId, { name: 1 }).lean(),
+    Project.findById(projectId, { name: 1 }).lean(),
+  ]);
+  const who = actor?.name || 'Someone';
+  const projectName = project?.name || 'a project';
+  if (type === 'added_to_project') {
+    return { title: `${who} added you to ${projectName}`, body: 'Open Bug Log to see its bugs.', url: `/#project-${projectId}` };
+  }
+  const key = bugKey(bug._id);
+  const title = {
+    reported: `${who} reported ${key}`,
+    status: `${who} changed ${key} to ${to_status}`,
+    comment: `${who} commented on ${key}`,
+    edited: to_status ? `${who} edited ${key} (now ${to_status})` : `${who} edited ${key}`,
+    notes: `${who} updated the notes on ${key}`,
+  }[type] || `${who} updated ${key}`;
+  const lines = [clip(bug.description, 120)];
+  if (type === 'status' && from_status) lines.push(`${from_status} → ${to_status}`);
+  if (comment) lines.push(`“${clip(comment, 140)}”`);
+  lines.push(projectName);
+  return { title, body: lines.filter(Boolean).join(NL), url: `/#project-${projectId}/bug-${bug._id}` };
+}
+
+/** Desktop pop-ups for the rows just saved; runs in the background so the request isn't slowed down. */
+function pushToDesktops(rows, message) {
+  sendToUsers(rows.map(r => ({ userId: r.user_id, payload: { ...message, tag: `bug-log-${r._id}`, id: String(r._id) } })))
+    .catch(() => {});
+}
 
 /**
  * Who hears about a change to a bug: its assignee (usually the developer), its reporter (usually the tester)
@@ -37,11 +72,12 @@ export async function notifyBugChange(bug, actorId, event) {
     const recipients = await recipientsFor(bug, actorId);
     if (!recipients.length) return;
     const now = new Date();
-    await Notification.insertMany(recipients.map(userId => ({
+    const rows = await Notification.insertMany(recipients.map(userId => ({
       user_id: userId, actor_id: actorId, project_id: bug.project_id, bug_id: bug._id,
       type: event.type, from_status: event.from_status ?? null, to_status: event.to_status ?? null,
       comment: event.comment || '', created_at: now,
     })));
+    pushToDesktops(rows, await desktopMessage({ ...event, actorId, projectId: bug.project_id, bug }));
   } catch (err) {
     console.error('[notifications] could not record notification:', err.message || err);
   }
@@ -51,7 +87,8 @@ export async function notifyBugChange(bug, actorId, event) {
 export async function notifyAddedToProject(projectId, userId, actorId) {
   if (userId === actorId) return;
   try {
-    await Notification.create({ user_id: userId, actor_id: actorId, project_id: projectId, type: 'added_to_project' });
+    const row = await Notification.create({ user_id: userId, actor_id: actorId, project_id: projectId, type: 'added_to_project' });
+    pushToDesktops([row], await desktopMessage({ type: 'added_to_project', actorId, projectId }));
   } catch (err) {
     console.error('[notifications] could not record notification:', err.message || err);
   }
