@@ -9,6 +9,11 @@ if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+// Local web (5173/5174) and mobile (5175) dev servers
+const LOCAL_ORIGINS = 'http://localhost:5173,http://localhost:5174,http://localhost:5175';
+// Deployed frontends: always allowed, whatever CORS_ORIGIN says. Origin only: no path, no trailing slash.
+const DEPLOYED_FRONTENDS = ['https://bug-tracker-frontend-sooty.vercel.app'];
+
 const list = value =>
   (value || '').split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
 
@@ -49,8 +54,9 @@ export const env = Object.freeze({
     uri: process.env.MONGODB_URI || '',
     dbName: process.env.MONGODB_DB || 'bugtracker',
   }),
-  // Frontend origins allowed to call the API. "*" allows any origin.
-  corsOrigins: list(process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:5175'),
+  // Frontend origins allowed to call the API: CORS_ORIGIN (or the local dev servers when it's unset)
+  // plus the deployed frontends, which are always allowed. "*" allows any origin.
+  corsOrigins: [...new Set([...list(process.env.CORS_ORIGIN || LOCAL_ORIGINS), ...DEPLOYED_FRONTENDS])],
   cloudinary: Object.freeze(readCloudinary()),
   // Desktop push notifications. Generate keys once with: npx web-push generate-vapid-keys
   push: Object.freeze({

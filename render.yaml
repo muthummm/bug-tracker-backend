@@ -20,7 +20,7 @@ services:
       - key: MONGODB_DB
         value: bugtracker
       - key: CORS_ORIGIN
-        sync: false
+        value: https://bug-tracker-frontend-sooty.vercel.app
       - key: CLOUDINARY_URL
         sync: false
       - key: CLOUDINARY_FOLDER
