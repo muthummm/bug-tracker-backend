@@ -1,0 +1,27 @@
+# Render Blueprint: Render dashboard > New > Blueprint > pick this repo.
+# Values marked `sync: false` are secrets: Render asks for them on the first deploy.
+services:
+  - type: web
+    name: bug-tracker-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: bugtracker
+      - key: CORS_ORIGIN
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: bug-tracker/screenshots
