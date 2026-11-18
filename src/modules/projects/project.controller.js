@@ -2,15 +2,15 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import * as memberService from './member.service.js';
 import * as projectService from './project.service.js';
 
-const loadProject = req => projectService.getProjectForMember(req.params.id, req.user.id);
+const loadProject = req => projectService.getProjectForUser(req.params.id, req.user);
 
 // ---------- projects ----------
 export const listProjects = asyncHandler(async (req, res) => {
-  res.json(await projectService.listProjectsForUser(req.user.id));
+  res.json(await projectService.listProjectsForUser(req.user));
 });
 
 export const createProject = asyncHandler(async (req, res) => {
-  res.status(201).json({ project: await projectService.createProject(req.body, req.user.id) });
+  res.status(201).json({ project: await projectService.createProject(req.body, req.user) });
 });
 
 export const updateProject = asyncHandler(async (req, res) => {

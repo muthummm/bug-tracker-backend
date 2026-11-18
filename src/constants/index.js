@@ -1,9 +1,17 @@
 // ---------- users ----------
-export const ROLES = Object.freeze({ TESTER: 'Tester', DEVELOPER: 'Developer', MANAGER: 'Manager' });
+export const ROLES = Object.freeze({ TESTER: 'Tester', DEVELOPER: 'Developer', SUPER_ADMIN: 'Super Admin' });
 export const ROLE_LIST = Object.values(ROLES);
-// Managers can do everything a tester can. They oversee the work, so bugs are never assigned to them.
-export const FULL_ACCESS_ROLES = [ROLES.TESTER, ROLES.MANAGER];
+// Roles people can pick when they sign up. Super admins are created with `npm run admin:create`.
+export const SIGNUP_ROLES = [ROLES.TESTER, ROLES.DEVELOPER];
+// The super admin can do everything a tester can, in every project, plus manage accounts and teams.
+// Bugs are never assigned to a super admin.
+export const FULL_ACCESS_ROLES = [ROLES.TESTER, ROLES.SUPER_ADMIN];
 export const hasFullAccess = role => FULL_ACCESS_ROLES.includes(role);
+export const isSuperAdmin = user => user?.role === ROLES.SUPER_ADMIN;
+
+// Account lifecycle: sign-up -> pending -> (approved) active <-> inactive, or (rejected) rejected
+export const USER_STATUS = Object.freeze({ PENDING: 'pending', ACTIVE: 'active', INACTIVE: 'inactive', REJECTED: 'rejected' });
+export const USER_STATUS_LIST = Object.values(USER_STATUS);
 
 // ---------- bugs ----------
 export const STATUSES = ['Open', 'In Progress', 'Fixed', 'Ready for Retest', 'Reopened', 'Closed', 'Not a Bug'];
@@ -27,7 +35,8 @@ export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 90; // 90 days
 // ---------- messages shared by several modules ----------
 export const MESSAGES = Object.freeze({
   SIGN_IN: 'Please sign in.',
-  TESTER_ONLY: 'Only testers and managers can do this. Developers can change the status and add notes.',
+  TESTER_ONLY: 'Only testers and the admin can do this. Developers can change the status and add notes.',
+  ADMIN_ONLY: 'Only the super admin can do this.',
   PROJECT_NOT_FOUND: 'Project not found, or you have not been added to it.',
   BUG_NOT_FOUND: 'Bug not found.',
 });

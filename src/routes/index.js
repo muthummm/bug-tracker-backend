@@ -1,5 +1,6 @@
 // Every API route, mounted under /api in app.js.
 import { Router } from 'express';
+import adminRoutes from '../modules/admin/admin.routes.js';
 import authRoutes from '../modules/auth/auth.routes.js';
 import bugRoutes from '../modules/bugs/bug.routes.js';
 import importExportRoutes from '../modules/import-export/import-export.routes.js';
@@ -15,6 +16,7 @@ const router = Router();
 router.use('/', systemRoutes);       // /health, /meta
 router.use('/auth', authRoutes);     // /auth/register, /auth/login, /auth/logout
 router.use('/', userRoutes);         // /me, /users
+router.use('/admin', adminRoutes);   // super admin: sign-up requests, account status
 router.use('/projects', projectRoutes);
 router.use('/bugs', bugRoutes);
 router.use('/notifications', notificationRoutes);

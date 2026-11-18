@@ -1,23 +1,25 @@
 import { Router } from 'express';
-import { authenticate, testerOnly } from '../../middlewares/auth.middleware.js';
+import { adminOnly, authenticate } from '../../middlewares/auth.middleware.js';
 import * as controller from './project.controller.js';
 
 const router = Router();
 
 router.use(authenticate);
 
+// Only the super admin creates, renames or deletes projects
 router.route('/')
-  .get(controller.listProjects)
-  .post(testerOnly, controller.createProject);
+  .get(controller.listProjects) // the super admin gets every project
+  .post(adminOnly, controller.createProject);
 
 router.route('/:id')
-  .put(testerOnly, controller.updateProject)
-  .delete(testerOnly, controller.deleteProject);
+  .put(adminOnly, controller.updateProject)
+  .delete(adminOnly, controller.deleteProject);
 
+// Only the super admin adds or removes people (testers and developers alike)
 router.route('/:id/members')
   .get(controller.listMembers)
-  .post(testerOnly, controller.addMember);
+  .post(adminOnly, controller.addMember);
 
-router.delete('/:id/members/:userId', testerOnly, controller.removeMember);
+router.delete('/:id/members/:userId', adminOnly, controller.removeMember);
 
 export default router;

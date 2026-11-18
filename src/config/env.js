@@ -1,5 +1,11 @@
 // Every setting comes from environment variables: `.env` locally, the host's dashboard in production.
 // Nothing else in the codebase should read `process.env` directly.
+import fs from 'node:fs';
+
+// Local development: load the project's .env if there is one. On a host like Render there is no .env;
+// the variables come from its dashboard. Values already set in the environment always win.
+const ENV_FILE = new URL('../../.env', import.meta.url);
+if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
@@ -66,5 +72,6 @@ export function validateEnv() {
   if (!env.push.enabled)
     console.warn('[env] VAPID keys are not set: desktop push notifications are off (in-app notifications still work).');
   if (problems.length)
-    throw new Error(`Invalid environment:\n  - ${problems.join('\n  - ')}\nCopy .env.example to .env and fill it in.`);
+    throw new Error(`Invalid environment:\n  - ${problems.join('\n  - ')}\n`
+      + 'Locally: copy .env.example to .env and fill it in. On Render: add it under the service\'s Environment tab.');
 }

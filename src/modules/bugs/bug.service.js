@@ -1,5 +1,5 @@
 import {
-  DEV_STATUSES, MESSAGES, PRIORITIES, PRIORITY_RANK, ROLES, STATUSES,
+  DEV_STATUSES, MESSAGES, PRIORITIES, PRIORITY_RANK, ROLES, STATUSES, isSuperAdmin,
 } from '../../constants/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { cleanString, escapeRegex, toPositiveInt } from '../../utils/sanitize.js';
@@ -34,11 +34,12 @@ const shapeOne = async id => (await shapeBugs([await Bug.findById(id).lean()]))[
 const addHistory = (bugId, userId, fromStatus, toStatus, comment, at = new Date()) =>
   History.create({ bug_id: bugId, user_id: userId, from_status: fromStatus, to_status: toStatus, comment, created_at: at });
 
-/** A bug in a project the user belongs to; otherwise 404. */
-export async function getBugForMember(rawId, userId) {
+/** A bug in a project the user belongs to (any bug for the super admin); otherwise 404. */
+export async function getBugForUser(rawId, user) {
   const id = toPositiveInt(rawId);
   const bug = id ? await Bug.findById(id).lean() : null;
-  if (!bug || !(await isMember(bug.project_id, userId))) throw ApiError.notFound(MESSAGES.BUG_NOT_FOUND);
+  const allowed = bug && (isSuperAdmin(user) || await isMember(bug.project_id, user.id));
+  if (!allowed) throw ApiError.notFound(MESSAGES.BUG_NOT_FOUND);
   return bug;
 }
 
@@ -108,7 +109,7 @@ export async function createBug(project, body, userId) {
 }
 
 export async function updateBug(old, body, userId) {
-  const fields = await parseBugInput(body, old.project_id);
+  const fields = await parseBugInput(body, old.project_id, old.assignee_id);
   await Bug.updateOne({ _id: old._id }, { ...fields, updated_at: new Date() });
 
   const changed = fields.status !== old.status;
@@ -149,8 +150,10 @@ export async function updateNotes(old, body, userId) {
   return shapeOne(old._id);
 }
 
-export async function deleteBug(bug, userId) {
-  if (bug.reporter_id !== userId) throw ApiError.forbidden('Only the person who reported this bug can delete it.');
+/** The reporter or the super admin can delete a bug. */
+export async function deleteBug(bug, user) {
+  if (bug.reporter_id !== user.id && !isSuperAdmin(user))
+    throw ApiError.forbidden('Only the person who reported this bug, or the admin, can delete it.');
   await Promise.all([Bug.deleteOne({ _id: bug._id }), History.deleteMany({ bug_id: bug._id }), deleteForBug(bug._id)]);
   if (bug.screenshot) await removeScreenshot(bug.screenshot);
 }

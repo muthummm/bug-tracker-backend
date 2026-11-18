@@ -1,5 +1,5 @@
 // Imports a bug spreadsheet (CSV exported from Excel / Google Sheets) into a project.
-import { ROLES } from '../../constants/index.js';
+import { SIGNUP_ROLES, USER_STATUS } from '../../constants/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { parseCsv } from '../../utils/csv.js';
 import { latestTodayIso, todayIso } from '../../utils/date.js';
@@ -7,30 +7,27 @@ import { cleanMultiline, escapeRegex } from '../../utils/sanitize.js';
 import { Bug } from '../bugs/bug.model.js';
 import { History } from '../bugs/history.model.js';
 import { nextIds } from '../counter/counter.model.js';
-import { addMember } from '../projects/member.service.js';
+import { Member } from '../projects/member.model.js';
 import { User } from '../users/user.model.js';
 import { HEADER_MAP, mapDate, mapPriority, mapStatus, normalize } from './csv-mapping.js';
 
-/** Finds an assignee by name or username, or creates a placeholder Developer account for them.
- *  Returns null for a manager: bugs are never assigned to managers, so the row is imported unassigned. */
-async function findOrCreateAssignee(name, createdUsers) {
-  const n = name.trim();
-  const existing = await User.findOne(
-    { $or: [{ name: new RegExp(`^${escapeRegex(n)}$`, 'i') }, { username_lower: n.toLowerCase() }] },
-    { _id: 1, role: 1 },
+/**
+ * Lookup of the project's active testers and developers by lower-case name and username.
+ * Only the admin adds people to projects, so the import never creates accounts or memberships:
+ * an assignee who isn't on the team is left unassigned and noted on the bug.
+ */
+async function teamLookup(projectId) {
+  const memberIds = (await Member.find({ project_id: projectId }, { user_id: 1 }).lean()).map(m => m.user_id);
+  const team = await User.find(
+    { _id: { $in: memberIds }, role: { $in: SIGNUP_ROLES }, status: USER_STATUS.ACTIVE },
+    { name: 1, username_lower: 1 },
   ).lean();
-  if (existing) return existing.role === ROLES.MANAGER ? null : existing._id;
-
-  let base = n.toLowerCase().replace(/[^a-z0-9._-]+/g, '') || 'user';
-  if (base.length < 3) base = `${base}user`.slice(0, 6);
-  let username = base;
-  for (let k = 2; await User.exists({ username_lower: username }); k++) username = base + k;
-
-  const id = await nextIds('users');
-  // Empty password: the real person sets one by registering with this username.
-  await User.create({ _id: id, name: n, username, username_lower: username, password_hash: '', role: ROLES.DEVELOPER });
-  createdUsers.push({ name: n, username });
-  return id;
+  const byKey = new Map();
+  for (const u of team) {
+    byKey.set(u.name.trim().toLowerCase(), u._id);
+    byKey.set(u.username_lower, u._id);
+  }
+  return byKey;
 }
 
 const findHeaderRow = rows => rows.findIndex(r => {
@@ -48,7 +45,7 @@ function panelAbove(rows, headerIdx) {
 }
 
 /**
- * @returns {{ imported: number, skipped: number, duplicates: number, createdUsers: {name, username}[], notes: string[] }}
+ * @returns {{ imported: number, skipped: number, duplicates: number, unmatchedAssignees: string[], notes: string[] }}
  */
 export async function importCsv(text, projectId, reporterId = null) {
   if (!projectId) throw ApiError.badRequest('Pick a project to import into.');
@@ -60,10 +57,11 @@ export async function importCsv(text, projectId, reporterId = null) {
   const columns = rows[headerIdx].map(h => HEADER_MAP[normalize(h)] || null);
   const colIndex = field => columns.indexOf(field);
 
-  const result = { imported: 0, skipped: 0, duplicates: 0, createdUsers: [], notes: [] };
+  const result = { imported: 0, skipped: 0, duplicates: 0, unmatchedAssignees: [], notes: [] };
   const today = todayIso();
   const latestToday = latestTodayIso();
-  const assignees = new Map(); // lower-case name -> user id, so each assignee is looked up once
+  const team = await teamLookup(projectId); // lower-case name/username -> user id
+  const unmatched = new Set();
   const seen = new Set(); // module + description already taken by this import
   const pending = [];
   let panel = panelAbove(rows, headerIdx);
@@ -110,14 +108,10 @@ export async function importCsv(text, projectId, reporterId = null) {
     lastDate = date;
 
     const assigneeName = get('assignee').trim();
-    let assigneeId = null;
-    if (assigneeName) {
-      const key = assigneeName.toLowerCase();
-      if (!assignees.has(key)) {
-        assignees.set(key, await findOrCreateAssignee(assigneeName, result.createdUsers));
-        if (assignees.get(key)) await addMember(projectId, assignees.get(key), reporterId); // assignees need to see the project
-      }
-      assigneeId = assignees.get(key);
+    const assigneeId = assigneeName ? team.get(assigneeName.toLowerCase()) ?? null : null;
+    if (assigneeName && !assigneeId) {
+      notes.push(`Assignee in sheet: ${assigneeName}`);
+      unmatched.add(assigneeName);
     }
 
     const sheetStatus = get('status').trim();
@@ -141,5 +135,6 @@ export async function importCsv(text, projectId, reporterId = null) {
     })));
   }
   result.imported = pending.length;
+  result.unmatchedAssignees = [...unmatched];
   return result;
 }

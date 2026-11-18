@@ -35,6 +35,7 @@ src/
 │   ├── password.js            # scrypt hash / verify, random tokens
 │   └── sanitize.js
 └── modules/
+    ├── admin/         admin.routes · admin.controller · admin.service (sign-up approval, account status)
     ├── auth/          auth.routes · auth.controller · auth.service · auth.validation · session.model
     ├── users/         user.routes · user.controller · user.service · user.model
     ├── projects/      project.routes · project.controller · project.service · member.service · *.model
@@ -44,6 +45,7 @@ src/
     ├── counter/       counter.model (BUG-001 style numeric ids)
     └── system/        health + meta
 scripts/
+├── create-admin.js            # npm run admin:create -- --username admin --name "Super Admin"
 ├── import-cli.js              # npm run import -- "bugs.csv" --project "Name"
 └── migrate-uploads.js         # npm run migrate:uploads (old DB images -> Cloudinary)
 ```
@@ -62,6 +64,14 @@ npm run dev               # restarts on file changes; or: npm start
 ```
 
 Check it: http://localhost:3001/api/health → `{"ok":true,"db":true,...}`
+
+### Create the super admin
+
+Nobody can sign up as super admin in the app. Create one (or reset an admin's password) from the command line:
+
+```bash
+npm run admin:create -- --username admin --name "Super Admin"   # asks for the password
+```
 
 ### Environment variables
 
@@ -110,9 +120,28 @@ git push
    - `MONGODB_URI` → your Atlas string
    - `CORS_ORIGIN` → your frontend URL, e.g. `https://bug-tracker-frontend.netlify.app`
    - `CLOUDINARY_URL` → the Cloudinary string from step 1
+   - `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` → optional, for desktop push (`npx web-push generate-vapid-keys`)
 3. Click **Apply**. The first deploy takes 2–3 minutes.
 
-*(Without the Blueprint: New → Web Service → repo, build `npm ci --omit=dev`, start `npm start`, health check `/api/health`, and add the same env vars plus `NODE_ENV=production`.)*
+**Without the Blueprint** (New → Web Service → pick the repo), use these settings:
+
+| Setting | Value |
+|---|---|
+| Build command | `npm ci --omit=dev` |
+| Start command | `npm start` |
+| Health check path | `/api/health` |
+| Environment | `NODE_ENV=production`, `MONGODB_URI`, `MONGODB_DB=bugtracker`, `CORS_ORIGIN`, `CLOUDINARY_URL` (+ optional VAPID keys) |
+
+The app reads its settings from Render's **Environment** tab. A `.env` file is only used locally and is never committed.
+
+If the log says *"Could not connect to any servers in your MongoDB Atlas cluster"*, Atlas is blocking Render:
+Atlas → **Network Access** → **Add IP Address** → **Allow access from anywhere** (`0.0.0.0/0`), wait until it is *Active*,
+then Render → **Manual Deploy** → **Deploy latest commit**.
+
+### Super admin
+
+The super admin lives in the database, so creating it locally (pointing at the same Atlas database) is enough:
+`npm run admin:create -- --username admin --name "Super Admin"`.
 
 ### 4. Check it
 
@@ -149,7 +178,7 @@ docker run --env-file .env -e NODE_ENV=production -p 3001:3001 bug-tracker-api
 
 | Collection | Holds |
 |---|---|
-| `users` | name, username (case-insensitive unique), password hash (scrypt), role `Tester`/`Developer` |
+| `users` | name, username (case-insensitive unique), password hash (scrypt), role `Tester`/`Developer`/`Super Admin`, status `pending`/`active`/`inactive`/`rejected` |
 | `sessions` | sign-in tokens; deleted automatically after 90 days |
 | `projects` | name (unique, ignoring case), description, creator |
 | `project_members` | who can see which project (unique per project + user) |
@@ -162,11 +191,17 @@ Collections and indexes are created automatically when the server starts.
 
 ## Rules the API enforces
 
-- **Testers** report bugs, edit all fields, import CSV, create projects, manage project teams, and close/reopen bugs.
+- **Super Admin** has full access to every project and bug (everything a tester can do), and is the **only** one who:
+  approves or rejects sign-up requests, activates or deactivates accounts, creates/renames/deletes projects,
+  and adds or removes project members.
+- **Testers** report bugs, edit all fields, import CSV, and close/reopen bugs in the projects they were added to.
 - **Developers** can move bugs to Open, In Progress, Fixed, Ready for Retest or Not a Bug, comment and edit notes.
-- A project and its bugs are visible **only to its members**; everyone else gets "not found".
-- Assignees must be project members. Removing a member unassigns their bugs in that project. A project keeps at least one tester.
-- "Date reported" can't be in the future. Only the reporter can delete a bug.
+- **Sign-up:** anyone can request a Tester or Developer account. It stays `pending` (can't sign in) until the super admin
+  approves it; every super admin gets a notification. Deactivating an account signs that person out immediately.
+- A project and its bugs are visible **only to its members** (and the super admin); everyone else gets "not found".
+- Assignees must be active project members. Removing a member unassigns their bugs in that project.
+- CSV import never creates accounts or adds members: an assignee who isn't on the team is left unassigned and noted on the bug.
+- "Date reported" can't be in the future. Only the reporter or the super admin can delete a bug.
 - Screenshots must be images from this app's own Cloudinary folder (no arbitrary URLs).
 - Sign-in and sign-up are rate-limited to 20 attempts per 15 minutes per IP.
 
@@ -178,20 +213,26 @@ Collections and indexes are created automatically when the server starts.
 | POST | `/api/auth/register`, `/api/auth/login` | public |
 | POST | `/api/auth/logout` | signed in |
 | GET | `/api/me` | signed in |
-| GET | `/api/users` | tester |
-| GET / POST | `/api/projects` | member / tester |
-| PUT / DELETE | `/api/projects/:id` | tester |
-| GET / POST | `/api/projects/:id/members` | member / tester |
-| DELETE | `/api/projects/:id/members/:userId` | tester |
+| GET | `/api/users` (active testers/developers to add to a project) | admin |
+| GET | `/api/admin/summary` → `{ counts }` | admin |
+| GET | `/api/admin/users?status=&role=&q=` | admin |
+| POST | `/api/admin/users/:id/approve`, `/api/admin/users/:id/reject` | admin |
+| PATCH | `/api/admin/users/:id/status` `{ status: "active" \| "inactive" }` | admin |
+| GET / POST | `/api/projects` | member / admin |
+| PUT / DELETE | `/api/projects/:id` | admin |
+| GET / POST | `/api/projects/:id/members` | member / admin |
+| DELETE | `/api/projects/:id/members/:userId` | admin |
 | GET / POST | `/api/bugs?project=ID` | member / tester |
-| GET / PUT / DELETE | `/api/bugs/:id` | member / tester / reporter |
+| GET / PUT / DELETE | `/api/bugs/:id` | member / tester / reporter or admin |
 | PATCH | `/api/bugs/:id/status`, `/api/bugs/:id/notes` | member |
 | POST | `/api/import?project=ID` (CSV body) | tester |
 | GET | `/api/export.csv?project=ID` | member |
 | POST | `/api/upload` (multipart field `file`) → `{ url }` | signed in |
 | GET | `/uploads/:id` (legacy images) | public |
 
-Send `Authorization: Bearer <token>` (from login/register) on every call except the public ones.
+"admin" means the super admin, who also passes every "tester" and "member" check.
+Send `Authorization: Bearer <token>` (from login) on every call except the public ones.
+`/api/auth/register` returns `{ pending: true, message, user }` with no token: the person signs in after approval.
 
 ## Import a CSV from the command line
 

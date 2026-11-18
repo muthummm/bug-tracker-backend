@@ -1,11 +1,11 @@
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { getProjectForMember } from '../projects/project.service.js';
+import { getProjectForUser } from '../projects/project.service.js';
 import * as bugService from './bug.service.js';
 
-const loadBug = req => bugService.getBugForMember(req.params.id, req.user.id);
+const loadBug = req => bugService.getBugForUser(req.params.id, req.user);
 
 export const listBugs = asyncHandler(async (req, res) => {
-  const project = await getProjectForMember(req.query.project, req.user.id);
+  const project = await getProjectForUser(req.query.project, req.user);
   res.json(await bugService.listBugs(project, req.query));
 });
 
@@ -14,7 +14,7 @@ export const getBug = asyncHandler(async (req, res) => {
 });
 
 export const createBug = asyncHandler(async (req, res) => {
-  const project = await getProjectForMember(req.body.project_id, req.user.id);
+  const project = await getProjectForUser(req.body.project_id, req.user);
   res.status(201).json({ bug: await bugService.createBug(project, req.body, req.user.id) });
 });
 
@@ -31,6 +31,6 @@ export const updateNotes = asyncHandler(async (req, res) => {
 });
 
 export const deleteBug = asyncHandler(async (req, res) => {
-  await bugService.deleteBug(await loadBug(req), req.user.id);
+  await bugService.deleteBug(await loadBug(req), req.user);
   res.json({ ok: true });
 });

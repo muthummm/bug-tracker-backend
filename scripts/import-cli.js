@@ -24,8 +24,8 @@ await connectDatabase();
 try {
   const result = await importCsv(fs.readFileSync(file, 'utf8'), await findOrCreateProjectByName(name));
   console.log(`Project "${name}": imported ${result.imported} bug(s). Skipped ${result.skipped} row(s) without a description. ${result.duplicates} already existed.`);
-  for (const u of result.createdUsers)
-    console.log(`Added assignee "${u.name}". They sign in by choosing "Create an account" with username "${u.username}".`);
+  if (result.unmatchedAssignees.length)
+    console.log(`Not on the project team, left unassigned (noted on each bug): ${result.unmatchedAssignees.join(', ')}`);
 } catch (err) {
   console.error(err.message);
   process.exitCode = 1;

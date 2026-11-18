@@ -1,7 +1,10 @@
+import { SIGNUP_ROLES, USER_STATUS } from '../../constants/index.js';
 import { User } from './user.model.js';
 
 /** The fields of a user that are safe to send to the browser. */
-export const toPublicUser = user => user && { id: user._id, name: user.name, username: user.username, role: user.role };
+export const toPublicUser = user => user && {
+  id: user._id, name: user.name, username: user.username, role: user.role, status: user.status,
+};
 
 export const findByUsername = username => User.findOne({ username_lower: username.toLowerCase() }).lean();
 
@@ -12,8 +15,11 @@ export async function usersById(ids) {
   return new Map(users.map(u => [u._id, u]));
 }
 
-/** Everyone with an account, testers first; testers use it to pick who to add to a project. */
-export async function listUsers() {
-  const users = await User.find({}, { name: 1, username: 1, role: 1 }).sort({ role: -1, name: 1 }).lean();
+/** Active testers and developers, testers first: the people the admin can add to a project. */
+export async function listAssignableUsers() {
+  const users = await User.find(
+    { role: { $in: SIGNUP_ROLES }, status: USER_STATUS.ACTIVE },
+    { name: 1, username: 1, role: 1, status: 1 },
+  ).sort({ role: -1, name: 1 }).lean();
   return users.map(toPublicUser);
 }

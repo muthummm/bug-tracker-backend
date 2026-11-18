@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from './env.js';
+import { runMigrations } from './migrations.js';
 import { Counter } from '../modules/counter/counter.model.js';
 import { User } from '../modules/users/user.model.js';
 import { Session } from '../modules/auth/session.model.js';
@@ -18,6 +19,7 @@ export async function connectDatabase() {
   mongoose.set('strictQuery', true);
   await mongoose.connect(env.mongo.uri, { dbName: env.mongo.dbName, serverSelectionTimeoutMS: 15000 });
   await Promise.all(MODELS.map(m => m.createCollection().then(() => m.syncIndexes())));
+  await runMigrations();
   return mongoose.connection;
 }
 

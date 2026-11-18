@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { ROLES } from '../../constants/index.js';
+import { ROLES, USER_STATUS } from '../../constants/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { toPositiveInt } from '../../utils/sanitize.js';
 import { Bug, bugKey } from '../bugs/bug.model.js';
@@ -47,17 +47,22 @@ function pushToDesktops(rows, message) {
 }
 
 /**
- * Who hears about a change to a bug: its assignee (usually the developer), its reporter (usually the tester)
- * and every manager in the project. The person who made the change is never notified about their own action,
- * and only current project members are notified.
+ * Who hears about a change to a bug: its assignee (usually the developer) and its reporter (usually the tester).
+ * The person who made the change is never notified about their own action, and only current project
+ * members (or a super admin who reported the bug) are notified.
  */
 async function recipientsFor(bug, actorId) {
-  const memberIds = (await Member.find({ project_id: bug.project_id }, { user_id: 1 }).lean()).map(m => m.user_id);
-  const managers = await User.find({ _id: { $in: memberIds }, role: ROLES.MANAGER }, { _id: 1 }).lean();
-  const members = new Set(memberIds);
-  const ids = new Set([bug.assignee_id, bug.reporter_id, ...managers.map(m => m._id)]);
+  const ids = new Set([bug.assignee_id, bug.reporter_id]);
   ids.delete(actorId);
-  return [...ids].filter(id => id != null && members.has(id));
+  ids.delete(null);
+  ids.delete(undefined);
+  if (!ids.size) return [];
+  const [members, admins] = await Promise.all([
+    Member.find({ project_id: bug.project_id, user_id: { $in: [...ids] } }, { user_id: 1 }).lean(),
+    User.find({ _id: { $in: [...ids] }, role: ROLES.SUPER_ADMIN }, { _id: 1 }).lean(),
+  ]);
+  const allowed = new Set([...members.map(m => m.user_id), ...admins.map(a => a._id)]);
+  return [...ids].filter(id => allowed.has(id));
 }
 
 /**
@@ -94,6 +99,28 @@ export async function notifyAddedToProject(projectId, userId, actorId) {
   }
 }
 
+/** Tells every active super admin that someone signed up and is waiting for approval. */
+export async function notifyAdminsOfSignup(user) {
+  try {
+    const admins = await User.find({ role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE }, { _id: 1 }).lean();
+    if (!admins.length) return;
+    const rows = await Notification.insertMany(admins.map(a => ({
+      user_id: a._id, actor_id: user._id, subject_user_id: user._id, type: 'signup_request',
+    })));
+    pushToDesktops(rows, {
+      title: `${user.name} wants to join as ${user.role}`,
+      body: `Username: ${user.username}\nApprove or reject the request in the admin panel.`,
+      url: '/#admin',
+    });
+  } catch (err) {
+    console.error('[notifications] could not record notification:', err.message || err);
+  }
+}
+
+/** Once one admin approves or rejects a request, it no longer shows as unread for any admin. */
+export const resolveSignupRequest = userId =>
+  Notification.updateMany({ type: 'signup_request', subject_user_id: userId, read: false }, { read: true });
+
 export const unreadCount = userId => Notification.countDocuments({ user_id: userId, read: false });
 
 /** The user's latest notifications with actor, bug and project names filled in. */
@@ -102,14 +129,17 @@ export async function listForUser(userId, query = {}) {
   if (query.unread === '1' || query.unread === 'true') filter.read = false;
   const rows = await Notification.find(filter).sort({ created_at: -1, _id: -1 }).limit(LIST_LIMIT).lean();
 
-  const [actors, bugs, projects, unread] = await Promise.all([
+  const subjectIds = [...new Set(rows.map(r => r.subject_user_id).filter(id => id != null))];
+  const [actors, bugs, projects, subjects, unread] = await Promise.all([
     usersById(rows.map(r => r.actor_id)),
     Bug.find({ _id: { $in: [...new Set(rows.map(r => r.bug_id).filter(id => id != null))] } }, { description: 1 }).lean(),
-    Project.find({ _id: { $in: [...new Set(rows.map(r => r.project_id))] } }, { name: 1 }).lean(),
+    Project.find({ _id: { $in: [...new Set(rows.map(r => r.project_id).filter(id => id != null))] } }, { name: 1 }).lean(),
+    User.find({ _id: { $in: subjectIds } }, { username: 1, status: 1 }).lean(),
     unreadCount(userId),
   ]);
   const bugById = new Map(bugs.map(b => [b._id, b]));
   const projectById = new Map(projects.map(p => [p._id, p]));
+  const subjectById = new Map(subjects.map(s => [s._id, s]));
 
   return {
     unread,
@@ -121,6 +151,9 @@ export async function listForUser(userId, query = {}) {
       project_name: projectById.get(n.project_id)?.name ?? null,
       actor_name: actors.get(n.actor_id)?.name ?? 'Someone',
       actor_role: actors.get(n.actor_id)?.role ?? null,
+      // signup_request: the request's username and where it stands now (pending/active/rejected/...)
+      subject_username: subjectById.get(n.subject_user_id)?.username ?? null,
+      subject_status: subjectById.get(n.subject_user_id)?.status ?? null,
     })),
   };
 }

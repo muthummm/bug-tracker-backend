@@ -1,4 +1,4 @@
-import { FULL_ACCESS_ROLES } from '../../constants/index.js';
+import { SIGNUP_ROLES, USER_STATUS } from '../../constants/index.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { cleanString, toPositiveInt } from '../../utils/sanitize.js';
 import { Bug } from '../bugs/bug.model.js';
@@ -36,20 +36,24 @@ export async function listMembers(projectId) {
     .map(r => {
       const u = byId.get(r.user_id);
       return {
-        id: u._id, name: u.name, username: u.username, role: u.role, pending: u.password_hash === '',
+        id: u._id, name: u.name, username: u.username, role: u.role, status: u.status,
         added_at: r.added_at, added_by_name: adders.get(r.added_by)?.name ?? null,
       };
     })
     .sort((a, b) => b.role.localeCompare(a.role) || a.name.localeCompare(b.name));
 }
 
-/** Adds a person by user id or username. */
+/** Super admin only (checked by the route): adds an active tester or developer by user id or username. */
 export async function addToProject(projectId, { user_id: rawUserId, username }, addedBy) {
   const userId = toPositiveInt(rawUserId);
   const user = userId
     ? await User.findById(userId).lean()
     : await findByUsername(cleanString(username, 40));
-  if (!user) throw ApiError.notFound('No account with that username. Ask them to create an account first.');
+  if (!user) throw ApiError.notFound('No account with that username. Ask them to sign up first.');
+  if (!SIGNUP_ROLES.includes(user.role))
+    throw ApiError.badRequest('Only testers and developers are added to projects. The admin already sees every project.');
+  if (user.status !== USER_STATUS.ACTIVE)
+    throw ApiError.badRequest(`${user.name}'s account is ${user.status}. Approve or activate it first.`);
   if (await isMember(projectId, user._id)) throw ApiError.conflict(`${user.name} is already in this project.`);
 
   await addMember(projectId, user._id, addedBy);
@@ -57,15 +61,10 @@ export async function addToProject(projectId, { user_id: rawUserId, username }, 
   return { added: toPublicUser(user), members: await listMembers(projectId) };
 }
 
-/** Removes a person; their bugs in this project become unassigned. A project keeps at least one tester or manager. */
+/** Super admin only (checked by the route): removes a person; their bugs in this project become unassigned. */
 export async function removeFromProject(projectId, rawUserId) {
   const userId = Number(rawUserId);
   if (!(await isMember(projectId, userId))) throw ApiError.notFound('That person is not in this project.');
-
-  const others = (await Member.find({ project_id: projectId, user_id: { $ne: userId } }, { user_id: 1 }).lean())
-    .map(m => m.user_id);
-  if (!(await User.exists({ _id: { $in: others }, role: { $in: FULL_ACCESS_ROLES } })))
-    throw ApiError.badRequest('A project needs at least one tester or manager. Add another one before removing this person.');
 
   await Member.deleteOne({ project_id: projectId, user_id: userId });
   await deleteForMember(projectId, userId);
