@@ -5,6 +5,7 @@ import { cleanString, escapeRegex, toPositiveInt } from '../../utils/sanitize.js
 import { endAllSessions } from '../auth/auth.service.js';
 import { resolveSignupRequest } from '../notifications/notification.service.js';
 import { Member } from '../projects/member.model.js';
+import { Project } from '../projects/project.model.js';
 import { User } from '../users/user.model.js';
 import { toPublicUser, usersById } from '../users/user.service.js';
 
@@ -46,22 +47,33 @@ export async function listAccounts(query = {}) {
 
   const users = await User.find(filter, { password_hash: 0 }).sort({ created_at: -1, _id: -1 }).lean();
   const ids = users.map(u => u._id);
-  const [reviewers, projectCounts, counts] = await Promise.all([
+  const [reviewers, memberships, counts] = await Promise.all([
     usersById(users.map(u => u.reviewed_by)),
-    Member.aggregate([{ $match: { user_id: { $in: ids } } }, { $group: { _id: '$user_id', n: { $sum: 1 } } }]),
+    Member.find({ user_id: { $in: ids } }, { user_id: 1, project_id: 1 }).lean(),
     accountCounts(),
   ]);
-  const projectsById = new Map(projectCounts.map(p => [p._id, p.n]));
+  const projects = await Project.find({ _id: { $in: [...new Set(memberships.map(m => m.project_id))] } }, { name: 1 }).lean();
+  const projectName = new Map(projects.map(p => [p._id, p.name]));
+  const projectsByUser = new Map();
+  for (const m of memberships) {
+    if (!projectName.has(m.project_id)) continue;
+    if (!projectsByUser.has(m.user_id)) projectsByUser.set(m.user_id, []);
+    projectsByUser.get(m.user_id).push({ id: m.project_id, name: projectName.get(m.project_id) });
+  }
 
   return {
     counts,
-    users: users.map(u => ({
-      ...toPublicUser(u),
-      created_at: u.created_at,
-      reviewed_at: u.reviewed_at,
-      reviewed_by_name: reviewers.get(u.reviewed_by)?.name ?? null,
-      projects: projectsById.get(u._id) || 0,
-    })),
+    users: users.map(u => {
+      const list = (projectsByUser.get(u._id) || []).sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        ...toPublicUser(u),
+        created_at: u.created_at,
+        reviewed_at: u.reviewed_at,
+        reviewed_by_name: reviewers.get(u.reviewed_by)?.name ?? null,
+        projects: list.length,
+        project_list: list, // [{ id, name }] the projects they're a member of
+      };
+    }),
   };
 }
 
