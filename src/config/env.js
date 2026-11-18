@@ -50,7 +50,7 @@ export const env = Object.freeze({
     dbName: process.env.MONGODB_DB || 'bugtracker',
   }),
   // Frontend origins allowed to call the API. "*" allows any origin.
-  corsOrigins: list(process.env.CORS_ORIGIN || 'http://localhost:5173'),
+  corsOrigins: list(process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:5175'),
   cloudinary: Object.freeze(readCloudinary()),
   // Desktop push notifications. Generate keys once with: npx web-push generate-vapid-keys
   push: Object.freeze({
